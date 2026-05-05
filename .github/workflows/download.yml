@@ -1,4 +1,4 @@
-name: SoundCloud Downloader (via Link)
+name: SoundCloud Downloader (Debug)
 
 on:
   workflow_dispatch:
@@ -8,14 +8,14 @@ on:
         required: true
         type: string
       filename:
-        description: 'Output filename (optional, without extension)'
+        description: 'Output filename (optional)'
         required: false
         type: string
         default: ''
 
 jobs:
   download-audio:
-    name: Download SoundCloud Audio
+    name: Download SoundCloud Audio (debug)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -29,81 +29,31 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install FFmpeg and yt-dlp
+      - name: Install yt-dlp
+        run: pip install yt-dlp
+
+      - name: Download with verbose output
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          pip install yt-dlp
-
-      - name: Download Audio
-        id: download
-        run: |
-          python3 << 'PYEOF'
-          import os, sys, subprocess, shutil
-
-          SOUNDCLOUD_URL = os.environ['SOUNDCLOUD_URL'].strip()
-          CUSTOM_FILENAME = os.environ.get('FILENAME', '').strip()
-
-          os.makedirs("downloads", exist_ok=True)
-          output_template = "downloads/%(title)s.%(ext)s"
-
-          cmd = [
-              "yt-dlp",
-              "-x", "--audio-format", "mp3",
-              "--embed-thumbnail",
-              "--output", output_template,
-              SOUNDCLOUD_URL
-          ]
-
-          print(f"Downloading from: {SOUNDCLOUD_URL}")
-          subprocess.run(cmd, check=True)
-
-          # After download, find the mp3 file (newest)
-          mp3_files = sorted(
-              [f for f in os.listdir("downloads") if f.endswith(".mp3")],
-              key=lambda x: os.path.getmtime(os.path.join("downloads", x)),
-              reverse=True
-          )
-          if not mp3_files:
-              print("No mp3 file found")
-              sys.exit(1)
-
-          original_file = mp3_files[0]
-          original_path = os.path.join("downloads", original_file)
-          file_size = os.path.getsize(original_path) / (1024 * 1024)
-
-          if CUSTOM_FILENAME:
-              # Rename if custom filename provided
-              new_name = CUSTOM_FILENAME
-              if not new_name.endswith(".mp3"):
-                  new_name += ".mp3"
-              new_path = os.path.join("downloads", new_name)
-              os.rename(original_path, new_path)
-              final_name = new_name
-          else:
-              final_name = original_file
-
-          print(f"Downloaded: {final_name} ({file_size:.2f} MB)")
-
-          # Save metadata for commit
-          with open('/tmp/audio_meta.txt', 'w') as f:
-              f.write(f"{final_name}\n{file_size:.2f}\n")
-          PYEOF
-        env:
-          SOUNDCLOUD_URL: ${{ github.event.inputs.soundcloud_url }}
-          FILENAME: ${{ github.event.inputs.filename }}
+          mkdir -p downloads
+          yt-dlp \
+            -v \
+            -f bestaudio \
+            --output "downloads/%(title)s.%(ext)s" \
+            --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            "${{ github.event.inputs.soundcloud_url }}" 2>&1 | tee download.log
+          echo "=== ls downloads ==="
+          ls -la downloads/
+        continue-on-error: true
 
       - name: Commit and Push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "actions@github.com"
-          git add ./downloads/
+          git add downloads/ download.log || true
           if git diff --staged --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-          FILENAME=$(sed -n '1p' /tmp/audio_meta.txt)
-          SIZE_MB=$(sed -n '2p' /tmp/audio_meta.txt)
-          git commit -m "Download $FILENAME ($SIZE_MB MB)"
+          git commit -m "Debug download attempt"
           git pull --rebase origin main
           git push origin main
