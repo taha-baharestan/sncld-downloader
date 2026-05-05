@@ -1,4 +1,4 @@
-name: SoundCloud Downloader (Cobalt)
+name: SoundCloud Downloader (Tor)
 
 on:
   workflow_dispatch:
@@ -8,14 +8,14 @@ on:
         required: true
         type: string
       filename:
-        description: 'Custom filename (optional)'
+        description: 'Output filename (optional)'
         required: false
         type: string
         default: ''
 
 jobs:
-  download-audio:
-    name: Download via Cobalt API
+  download-via-tor:
+    name: Download Audio via Tor
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -24,77 +24,70 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Get download URL from Cobalt
-        id: cobalt
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Tor and yt-dlp
         run: |
-          RESPONSE=$(curl -s -X POST "https://api.cobalt.tools/" \
-            -H "Accept: application/json" \
-            -H "Content-Type: application/json" \
-            -d "{\"url\":\"${{ github.event.inputs.soundcloud_url }}\"}")
+          sudo apt-get update
+          sudo apt-get install -y tor
+          pip install yt-dlp
 
-          echo "Cobalt response: $RESPONSE"
+      - name: Start Tor service
+        run: sudo systemctl start tor
 
-          # Check for error or picker
-          STATUS=$(echo "$RESPONSE" | jq -r '.status // "ok"')
-          if [ "$STATUS" != "ok" ]; then
-            echo "Cobalt error: $(echo "$RESPONSE" | jq -r '.error // .text')"
-            exit 1
-          fi
-
-          # If a picker is returned (multiple files), take first one
-          PICKER=$(echo "$RESPONSE" | jq -r '.picker')
-          if [ "$PICKER" != "null" ]; then
-            echo "Picker detected, selecting first option..."
-            ITEM_URL=$(echo "$PICKER" | jq -r '.[0].url')
-            # Re-request for that specific item
-            RESPONSE=$(curl -s -X POST "https://api.cobalt.tools/" \
-              -H "Accept: application/json" \
-              -H "Content-Type: application/json" \
-              -d "{\"url\":\"$ITEM_URL\"}")
-          fi
-
-          DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.url')
-          if [ "$DOWNLOAD_URL" == "null" ] || [ -z "$DOWNLOAD_URL" ]; then
-            echo "Failed to extract download URL"
-            exit 1
-          fi
-
-          echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
-
-      - name: Download audio file
+      - name: Download Audio through Tor
         id: download
         run: |
-          mkdir -p downloads
-          URL="${{ steps.cobalt.outputs.download_url }}"
+          python3 << 'PYEOF'
+          import os, sys, subprocess
 
-          # Try to get filename from Content-Disposition header
-          HEADER_FILENAME=$(curl -sI "$URL" | grep -i content-disposition | sed -n 's/.*filename="\{0,1\}\([^";]*\).*/\1/p')
-          if [ -n "$HEADER_FILENAME" ]; then
-            OUTFILE="downloads/$HEADER_FILENAME"
-          else
-            # Fallback: extract from URL path
-            OUTFILE="downloads/$(basename "$URL" | cut -d '?' -f 1)"
-          fi
+          SOUNDCLOUD_URL = os.environ['SOUNDCLOUD_URL'].strip()
+          CUSTOM_FILENAME = os.environ.get('FILENAME', '').strip()
 
-          curl -L -o "$OUTFILE" "$URL"
+          os.makedirs("downloads", exist_ok=True)
 
-          if [ $? -ne 0 ]; then
-            echo "Download failed"
-            exit 1
-          fi
+          cmd = [
+              "yt-dlp",
+              "-f", "bestaudio",
+              "--output", "downloads/%(title)s.%(ext)s",
+              "--proxy", "socks5://127.0.0.1:9050",
+              "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              SOUNDCLOUD_URL
+          ]
 
-          echo "Downloaded: $(basename "$OUTFILE") ($(du -h "$OUTFILE" | cut -f1))"
+          print(f"Downloading from: {SOUNDCLOUD_URL}")
+          result = subprocess.run(cmd)
+          if result.returncode != 0:
+              print(f"ERROR: yt-dlp exited with code {result.returncode}")
+              sys.exit(1)
 
-          # Apply custom filename if provided
-          CUSTOM="${{ github.event.inputs.filename }}"
-          if [ -n "$CUSTOM" ]; then
-            EXT="${OUTFILE##*.}"
-            NEWNAME="downloads/$CUSTOM.$EXT"
-            mv "$OUTFILE" "$NEWNAME"
-            OUTFILE="$NEWNAME"
-          fi
+          all_files = [f for f in os.listdir("downloads") if not f.startswith('.')]
+          if not all_files:
+              print("No file downloaded.")
+              sys.exit(1)
+          newest_file = max(all_files, key=lambda f: os.path.getmtime(os.path.join("downloads", f)))
+          original_path = os.path.join("downloads", newest_file)
+          file_size = os.path.getsize(original_path) / (1024 * 1024)
 
-          echo "filename=$(basename "$OUTFILE")" >> $GITHUB_OUTPUT
+          final_name = newest_file
+          if CUSTOM_FILENAME:
+              ext = os.path.splitext(newest_file)[1]
+              new_name = CUSTOM_FILENAME + ext
+              new_path = os.path.join("downloads", new_name)
+              os.rename(original_path, new_path)
+              final_name = new_name
+
+          print(f"SUCCESS: {final_name} ({file_size:.2f} MB)")
+
+          with open('/tmp/audio_meta.txt', 'w') as f:
+              f.write(f"{final_name}\n{file_size:.2f}\n")
+          PYEOF
+        env:
+          SOUNDCLOUD_URL: ${{ github.event.inputs.soundcloud_url }}
+          FILENAME: ${{ github.event.inputs.filename }}
 
       - name: Commit and Push
         run: |
@@ -105,6 +98,8 @@ jobs:
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "Download ${{ steps.download.outputs.filename }}"
+          FILENAME=$(sed -n '1p' /tmp/audio_meta.txt)
+          SIZE_MB=$(sed -n '2p' /tmp/audio_meta.txt)
+          git commit -m "Download $FILENAME ($SIZE_MB MB)"
           git pull --rebase origin main
           git push origin main
