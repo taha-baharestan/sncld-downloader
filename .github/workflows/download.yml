@@ -1,4 +1,4 @@
-name: SoundCloud Downloader (Debug)
+name: SoundCloud Downloader (Cobalt)
 
 on:
   workflow_dispatch:
@@ -8,14 +8,14 @@ on:
         required: true
         type: string
       filename:
-        description: 'Output filename (optional)'
+        description: 'Custom filename (optional)'
         required: false
         type: string
         default: ''
 
 jobs:
   download-audio:
-    name: Download SoundCloud Audio (debug)
+    name: Download via Cobalt API
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -24,36 +24,87 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Get download URL from Cobalt
+        id: cobalt
+        run: |
+          RESPONSE=$(curl -s -X POST "https://api.cobalt.tools/" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -d "{\"url\":\"${{ github.event.inputs.soundcloud_url }}\"}")
 
-      - name: Install yt-dlp
-        run: pip install yt-dlp
+          echo "Cobalt response: $RESPONSE"
 
-      - name: Download with verbose output
+          # Check for error or picker
+          STATUS=$(echo "$RESPONSE" | jq -r '.status // "ok"')
+          if [ "$STATUS" != "ok" ]; then
+            echo "Cobalt error: $(echo "$RESPONSE" | jq -r '.error // .text')"
+            exit 1
+          fi
+
+          # If a picker is returned (multiple files), take first one
+          PICKER=$(echo "$RESPONSE" | jq -r '.picker')
+          if [ "$PICKER" != "null" ]; then
+            echo "Picker detected, selecting first option..."
+            ITEM_URL=$(echo "$PICKER" | jq -r '.[0].url')
+            # Re-request for that specific item
+            RESPONSE=$(curl -s -X POST "https://api.cobalt.tools/" \
+              -H "Accept: application/json" \
+              -H "Content-Type: application/json" \
+              -d "{\"url\":\"$ITEM_URL\"}")
+          fi
+
+          DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.url')
+          if [ "$DOWNLOAD_URL" == "null" ] || [ -z "$DOWNLOAD_URL" ]; then
+            echo "Failed to extract download URL"
+            exit 1
+          fi
+
+          echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
+
+      - name: Download audio file
+        id: download
         run: |
           mkdir -p downloads
-          yt-dlp \
-            -v \
-            -f bestaudio \
-            --output "downloads/%(title)s.%(ext)s" \
-            --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-            "${{ github.event.inputs.soundcloud_url }}" 2>&1 | tee download.log
-          echo "=== ls downloads ==="
-          ls -la downloads/
-        continue-on-error: true
+          URL="${{ steps.cobalt.outputs.download_url }}"
+
+          # Try to get filename from Content-Disposition header
+          HEADER_FILENAME=$(curl -sI "$URL" | grep -i content-disposition | sed -n 's/.*filename="\{0,1\}\([^";]*\).*/\1/p')
+          if [ -n "$HEADER_FILENAME" ]; then
+            OUTFILE="downloads/$HEADER_FILENAME"
+          else
+            # Fallback: extract from URL path
+            OUTFILE="downloads/$(basename "$URL" | cut -d '?' -f 1)"
+          fi
+
+          curl -L -o "$OUTFILE" "$URL"
+
+          if [ $? -ne 0 ]; then
+            echo "Download failed"
+            exit 1
+          fi
+
+          echo "Downloaded: $(basename "$OUTFILE") ($(du -h "$OUTFILE" | cut -f1))"
+
+          # Apply custom filename if provided
+          CUSTOM="${{ github.event.inputs.filename }}"
+          if [ -n "$CUSTOM" ]; then
+            EXT="${OUTFILE##*.}"
+            NEWNAME="downloads/$CUSTOM.$EXT"
+            mv "$OUTFILE" "$NEWNAME"
+            OUTFILE="$NEWNAME"
+          fi
+
+          echo "filename=$(basename "$OUTFILE")" >> $GITHUB_OUTPUT
 
       - name: Commit and Push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "actions@github.com"
-          git add downloads/ download.log || true
+          git add downloads/
           if git diff --staged --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "Debug download attempt"
+          git commit -m "Download ${{ steps.download.outputs.filename }}"
           git pull --rebase origin main
           git push origin main
