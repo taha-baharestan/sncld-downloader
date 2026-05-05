@@ -1,4 +1,4 @@
-[debug] Command-line config: ['-v', '-f', 'bestaudio', '--output', 'downloads/%(title)s.%(ext)s', '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'https://soundcloud.com/kygo/dean-lewis-lost-without-you']
+[debug] Command-line config: ['-v', '-f', 'bestaudio', '--output', 'downloads/%(title)s.%(ext)s', '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'https://soundcloud.com/cleopoldmusic/george-ezra-budapest-cover']
 [debug] Encodings: locale UTF-8, fs utf-8, pref UTF-8, out utf-8 (No ANSI), error utf-8 (No ANSI), screen utf-8 (No ANSI)
 [debug] yt-dlp version stable@2026.03.17 from yt-dlp/yt-dlp [04d6974f5] (pip)
 [debug] Python 3.11.15 (CPython x86_64 64bit) - Linux-6.17.0-1010-azure-x86_64-with-glibc2.39 (OpenSSL 3.0.13 30 Jan 2024, glibc 2.39)
@@ -12,8 +12,8 @@
 [soundcloud] Downloading main page
 [soundcloud] Downloading JS asset
 [debug] Saving soundcloud.client_id to cache
-[soundcloud] Extracting URL: https://soundcloud.com/kygo/dean-lewis-lost-without-you
-[soundcloud] kygo/dean-lewis-lost-without-you: Downloading info JSON
+[soundcloud] Extracting URL: https://soundcloud.com/cleopoldmusic/george-ezra-budapest-cover
+[soundcloud] cleopoldmusic/george-ezra-budapest-cover: Downloading info JSON
 ERROR: [soundcloud] Unable to download JSON metadata: HTTP Error 404: Not Found (caused by <HTTPError 404: Not Found>)
   File "/opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages/yt_dlp/extractor/common.py", line 765, in extract
     ie_result = self._real_extract(url)
