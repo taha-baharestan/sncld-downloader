@@ -1,21 +1,21 @@
-name: SoundCloud Downloader (Tor)
+name: SoundCloud Downloader (via sclib)
 
 on:
   workflow_dispatch:
     inputs:
       soundcloud_url:
-        description: 'SoundCloud track or playlist URL'
+        description: 'SoundCloud track URL'
         required: true
         type: string
       filename:
-        description: 'Output filename (optional)'
+        description: 'Output filename (optional, without extension)'
         required: false
         type: string
         default: ''
 
 jobs:
-  download-via-tor:
-    name: Download Audio via Tor
+  download:
+    name: Download Track
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -29,65 +29,60 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Tor and yt-dlp
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y tor
-          pip install yt-dlp
+      - name: Install soundcloud-lib
+        run: pip install soundcloud-lib
 
-      - name: Start Tor service
-        run: sudo systemctl start tor
-
-      - name: Download Audio through Tor
-        id: download
+      - name: Download Audio
+        id: download_step
+        env:
+          INPUT_URL: ${{ github.event.inputs.soundcloud_url }}
+          CUSTOM_NAME: ${{ github.event.inputs.filename }}
         run: |
           python3 << 'PYEOF'
-          import os, sys, subprocess
+          import os, sys
+          from sclib import SoundcloudAPI, Track
 
-          SOUNDCLOUD_URL = os.environ['SOUNDCLOUD_URL'].strip()
-          CUSTOM_FILENAME = os.environ.get('FILENAME', '').strip()
+          url = os.environ['INPUT_URL'].strip()
+          custom_name = os.environ.get('CUSTOM_NAME', '').strip()
+
+          api = SoundcloudAPI()
+
+          print(f"Resolving: {url}")
+          try:
+              track = api.resolve(url)
+              if not isinstance(track, Track):
+                  print("Error: The URL does not point to a track.")
+                  sys.exit(1)
+          except Exception as e:
+              print(f"Failed to resolve track: {e}")
+              sys.exit(1)
+
+          artist = track.artist or "Unknown Artist"
+          title = track.title or "Unknown Title"
+
+          if custom_name:
+              filename = f"{custom_name}.mp3"
+          else:
+              safe = lambda s: "".join(c for c in s if c.isalnum() or c in (' ','-','_')).rstrip()
+              filename = f"{safe(artist)} - {safe(title)}.mp3"
 
           os.makedirs("downloads", exist_ok=True)
+          filepath = os.path.join("downloads", filename)
 
-          cmd = [
-              "yt-dlp",
-              "-f", "bestaudio",
-              "--output", "downloads/%(title)s.%(ext)s",
-              "--proxy", "socks5://127.0.0.1:9050",
-              "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-              SOUNDCLOUD_URL
-          ]
-
-          print(f"Downloading from: {SOUNDCLOUD_URL}")
-          result = subprocess.run(cmd)
-          if result.returncode != 0:
-              print(f"ERROR: yt-dlp exited with code {result.returncode}")
+          print(f"Downloading: {artist} - {title}")
+          try:
+              with open(filepath, 'wb+') as f:
+                  track.write_mp3_to(f)
+          except Exception as e:
+              print(f"Error writing mp3: {e}")
               sys.exit(1)
 
-          all_files = [f for f in os.listdir("downloads") if not f.startswith('.')]
-          if not all_files:
-              print("No file downloaded.")
-              sys.exit(1)
-          newest_file = max(all_files, key=lambda f: os.path.getmtime(os.path.join("downloads", f)))
-          original_path = os.path.join("downloads", newest_file)
-          file_size = os.path.getsize(original_path) / (1024 * 1024)
+          size_mb = os.path.getsize(filepath) / (1024 * 1024)
+          print(f"SUCCESS: {filename} ({size_mb:.2f} MB)")
 
-          final_name = newest_file
-          if CUSTOM_FILENAME:
-              ext = os.path.splitext(newest_file)[1]
-              new_name = CUSTOM_FILENAME + ext
-              new_path = os.path.join("downloads", new_name)
-              os.rename(original_path, new_path)
-              final_name = new_name
-
-          print(f"SUCCESS: {final_name} ({file_size:.2f} MB)")
-
-          with open('/tmp/audio_meta.txt', 'w') as f:
-              f.write(f"{final_name}\n{file_size:.2f}\n")
+          with open('/tmp/meta.txt', 'w') as f:
+              f.write(f"{filename}\n{size_mb:.2f}\n")
           PYEOF
-        env:
-          SOUNDCLOUD_URL: ${{ github.event.inputs.soundcloud_url }}
-          FILENAME: ${{ github.event.inputs.filename }}
 
       - name: Commit and Push
         run: |
@@ -98,8 +93,8 @@ jobs:
             echo "No changes to commit"
             exit 0
           fi
-          FILENAME=$(sed -n '1p' /tmp/audio_meta.txt)
-          SIZE_MB=$(sed -n '2p' /tmp/audio_meta.txt)
-          git commit -m "Download $FILENAME ($SIZE_MB MB)"
+          FILENAME=$(sed -n '1p' /tmp/meta.txt)
+          SIZE=$(sed -n '2p' /tmp/meta.txt)
+          git commit -m "Download $FILENAME ($SIZE MB)"
           git pull --rebase origin main
           git push origin main
