@@ -1,0 +1,44 @@
+name: 🧹 Clean SoundCloud Downloads
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DELETE to confirm cleanup'
+        required: true
+        type: string
+
+jobs:
+  cleanup:
+    name: 🧹 Clean Downloaded Files
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm == 'DELETE'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: 🧹 Remove downloaded folders and index files
+        run: |
+          echo "Cleaning up..."
+          rm -rf downloads/ 2>/dev/null || true
+          rm -rf searches/ 2>/dev/null || true
+          rm -rf playlists/ 2>/dev/null || true
+          rm -f downloads.md 2>/dev/null || true
+          echo "Cleanup complete."
+
+      - name: 📤 Push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "bot@github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing to commit - repo is already clean."
+            exit 0
+          fi
+          git commit -m "🧹 Clean downloaded files [skip ci]"
+          git push
