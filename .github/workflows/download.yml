@@ -1,100 +1,302 @@
-name: SoundCloud Downloader (via sclib)
+name: 🎵 SoundCloud Downloader
 
 on:
   workflow_dispatch:
     inputs:
-      soundcloud_url:
-        description: 'SoundCloud track URL'
+      mode:
+        description: '🔄 Download Mode'
+        required: true
+        type: choice
+        options:
+          - single
+          - playlist
+          - search
+        default: 'single'
+      url:
+        description: '🎵 URL or Search Query'
         required: true
         type: string
-      filename:
-        description: 'Output filename (optional, without extension)'
+      quality:
+        description: 'Audio quality (best/128/192/320)'
         required: false
         type: string
-        default: ''
+        default: 'best'
+      max_tracks:
+        description: '🔢 Max results (for playlist/search)'
+        required: false
+        type: number
+        default: 10
+      split_threshold_mb:
+        description: '📦 Split > MB (0=no)'
+        required: false
+        type: number
+        default: 50
+
+env:
+  PYTHONUNBUFFERED: '1'
+  DEBIAN_FRONTEND: 'noninteractive'
 
 jobs:
-  download:
-    name: Download Track
+  download-soundcloud:
+    name: 🎧 SoundCloud Downloader
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: write
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
         with:
-          python-version: '3.11'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
 
-      - name: Install soundcloud-lib
-        run: pip install soundcloud-lib
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}
 
-      - name: Download Audio
-        id: download_step
+      - name: ⚡ Setup
+        run: |
+          python3 -c "import requests" 2>/dev/null || pip3 install -q requests
+          command -v yt-dlp &>/dev/null || pip3 install -q yt-dlp
+          command -v zip &>/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq zip)
+
+      - name: 🔗 Prepare
+        id: prep
+        run: |
+          M="${{ github.event.inputs.mode }}"
+          U="${{ github.event.inputs.url }}"
+          if [ "$M" == "search" ]; then
+            U="scsearch${MAX}:${U}"
+          fi
+          echo "URL=$U" >> $GITHUB_OUTPUT
+          echo "MODE=$M" >> $GITHUB_OUTPUT
+
+      - name: 🎯 Download & Process
+        id: main
         env:
-          INPUT_URL: ${{ github.event.inputs.soundcloud_url }}
-          CUSTOM_NAME: ${{ github.event.inputs.filename }}
+          MODE: ${{ steps.prep.outputs.MODE }}
+          URL: ${{ steps.prep.outputs.URL }}
+          QUALITY: ${{ github.event.inputs.quality }}
+          MAX: ${{ github.event.inputs.max_tracks }}
+          SPLIT: ${{ github.event.inputs.split_threshold_mb }}
         run: |
           python3 << 'PYEOF'
-          import os, sys
-          from sclib import SoundcloudAPI, Track
+          import os, json, time, re, subprocess, sys, hashlib
+          from pathlib import Path
+          from datetime import datetime
+          import requests as rq
 
-          url = os.environ['INPUT_URL'].strip()
-          custom_name = os.environ.get('CUSTOM_NAME', '').strip()
+          M = os.environ['MODE']
+          U = os.environ['URL']
+          Q = os.environ.get('QUALITY', 'best')
+          MX = int(os.environ.get('MAX', '10'))
+          SP = int(os.environ.get('SPLIT', '50'))
 
-          api = SoundcloudAPI()
+          def safe_name(text, maxlen=40):
+              safe = re.sub(r'[^\w]', '_', text)[:maxlen]
+              safe = re.sub(r'_+', '_', safe).strip('_')
+              if not safe:
+                  safe = hashlib.md5(text.encode()).hexdigest()[:8]
+              return safe
 
-          print(f"Resolving: {url}")
-          try:
-              track = api.resolve(url)
-              if not isinstance(track, Track):
-                  print("Error: The URL does not point to a track.")
+          def fmt_size(sz):
+              try:
+                  sz = int(sz)
+                  if sz >= 1e6: return f'{sz/1e6:.1f}MB'
+                  return f'{sz/1e3:.1f}KB'
+              except: return '?'
+
+          def get_tracks_info(url, limit):
+              cmd = ['yt-dlp', '--flat-playlist', '--dump-json', '--no-warnings',
+                     '--no-check-certificate', '--extractor-args', 'soundcloud:skip_auth=true']
+              if limit > 0 and M != 'single':
+                  cmd.extend(['--playlist-end', str(limit)])
+              cmd.append(url)
+
+              r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+              tracks = []
+              for line in r.stdout.strip().split('\n'):
+                  if line and len(tracks) < limit:
+                      try:
+                          d = json.loads(line)
+                          tid = d.get('id', '')
+                          if not tid: continue
+                          title = d.get('title', 'Untitled')[:80]
+                          artist = d.get('uploader') or d.get('artist') or 'Unknown Artist'
+                          duration = d.get('duration', 0)
+                          thumbnail = d.get('thumbnail', '')
+                          track_url = d.get('webpage_url') or d.get('url', '')
+                          tracks.append({
+                              'id': tid,
+                              'title': title,
+                              'artist': artist,
+                              'duration': int(duration) if duration else 0,
+                              'thumbnail': thumbnail,
+                              'url': track_url
+                          })
+                      except Exception as e:
+                          continue
+              return tracks
+
+          def download_track(track, out_dir, idx=1):
+              out_template = out_dir / f'{idx:03d}_{track["id"]}.%(ext)s'
+              quality_map = {
+                  'best': '0',
+                  '128': '128',
+                  '192': '192',
+                  '320': '320'
+              }
+              fmt_sel = f'bestaudio[abr<={quality_map.get(Q, "0")}]' if Q != 'best' else 'bestaudio/best'
+
+              cmd = [
+                  'yt-dlp',
+                  '--extract-audio',
+                  '--audio-format', 'mp3',
+                  '--audio-quality', quality_map.get(Q, '0'),
+                  '-o', str(out_template),
+                  '--no-playlist',
+                  '--no-warnings',
+                  '--no-check-certificate',
+                  '--extractor-args', 'soundcloud:skip_auth=true',
+                  track['url']
+              ]
+              try:
+                  subprocess.run(cmd, check=True, timeout=300)
+                  mp3_file = out_dir / f'{idx:03d}_{track["id"]}.mp3'
+                  if mp3_file.exists():
+                      return mp3_file
+                  found = list(out_dir.glob(f'{idx:03d}_{track["id"]}.*'))
+                  return found[0] if found else None
+              except Exception as e:
+                  print(f'Download error: {e}')
+                  return None
+
+          def split_file(filepath, threshold_mb):
+              size_mb = filepath.stat().st_size / 1e6
+              if threshold_mb > 0 and size_mb > threshold_mb:
+                  parent = filepath.parent
+                  name = filepath.name
+                  subprocess.run(['zip', '-r', '-q', '-s', f'{threshold_mb}m', f'{name}.zip', name],
+                                 cwd=parent, check=True)
+                  filepath.unlink()
+                  return True
+              return False
+
+          def generate_index(tracks, folder, prefix='sc'):
+              ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+              md_path = folder / f'{prefix}_{ts}.md'
+              contents = []
+              contents.append(f'# 🎧 SoundCloud {M.capitalize()}\n\n')
+              contents.append(f'**{datetime.now():%Y-%m-%d %H:%M}** | **{len(tracks)} tracks**\n\n')
+              contents.append('| # | Artwork | Title | Artist | Duration |\n')
+              contents.append('|---|---------|-------|--------|----------|\n')
+              for i, t in enumerate(tracks, 1):
+                  dur = f'{t["duration"]//60}:{t["duration"]%60:02d}' if t['duration'] else '?'
+                  art = f'<img src="{t["thumbnail"]}" width="60">' if t['thumbnail'] else ''
+                  contents.append(f'| {i} | {art} | {t["title"]} | {t["artist"]} | {dur} |\n')
+              contents.append('\n---\n')
+              for i, t in enumerate(tracks, 1):
+                  contents.append(f'### {i}. {t["title"]}\n')
+                  if t['thumbnail']:
+                      contents.append(f'![Artwork]({t["thumbnail"]})\n\n')
+                  contents.append(f'- Artist: {t["artist"]}\n')
+                  contents.append(f'- Duration: {t["duration"]//60}m{t["duration"]%60}s\n')
+                  contents.append(f'- URL: {t["url"]}\n\n')
+              with open(md_path, 'w', encoding='utf-8') as f:
+                  f.write('\n'.join(contents))
+              return md_path
+
+          print('='*50)
+          print(f'🎧 {M.upper()} MODE')
+          print('='*50)
+
+          if M == 'single':
+              tracks = get_tracks_info(U, 1)
+              if not tracks:
+                  print('❌ No track found')
                   sys.exit(1)
-          except Exception as e:
-              print(f"Failed to resolve track: {e}")
-              sys.exit(1)
+              artist = safe_name(tracks[0]['artist'], 30)
+              out_dir = Path(f'downloads/{artist}_tracks')
+              out_dir.mkdir(parents=True, exist_ok=True)
+              print(f'📥 Downloading: {tracks[0]["title"]} by {tracks[0]["artist"]}')
+              file = download_track(tracks[0], out_dir, 1)
+              if file:
+                  print(f'✅ Saved: {file}')
+                  split_file(file, SP)
+                  generate_index(tracks, out_dir)
+              else:
+                  print('❌ Download failed')
+                  sys.exit(1)
 
-          artist = track.artist or "Unknown Artist"
-          title = track.title or "Unknown Title"
+          elif M == 'playlist':
+              print(f'📋 Extracting playlist...')
+              tracks = get_tracks_info(U, MX)
+              if not tracks:
+                  print('❌ No tracks found')
+                  sys.exit(1)
+              first_track = tracks[0]
+              artist = safe_name(first_track.get('artist', 'playlist'), 30)
+              out_dir = Path(f'downloads/{artist}_playlist')
+              out_dir.mkdir(parents=True, exist_ok=True)
+              print(f'📥 Downloading {len(tracks)} tracks...')
+              ok = []
+              for i, track in enumerate(tracks, 1):
+                  print(f'[{i}/{len(tracks)}] {track["title"]}')
+                  file = download_track(track, out_dir, i)
+                  if file:
+                      ok.append(track)
+                      split_file(file, SP)
+                  else:
+                      print(f'   ❌ Failed')
+                  if i < len(tracks):
+                      time.sleep(1)
+              generate_index(ok, out_dir)
+              print(f'✅ Download complete: {len(ok)}/{len(tracks)} tracks')
 
-          if custom_name:
-              filename = f"{custom_name}.mp3"
-          else:
-              safe = lambda s: "".join(c for c in s if c.isalnum() or c in (' ','-','_')).rstrip()
-              filename = f"{safe(artist)} - {safe(title)}.mp3"
+          elif M == 'search':
+              print(f'🔍 Searching SoundCloud for: {U}')
+              tracks = get_tracks_info(U, MX)
+              if not tracks:
+                  print('❌ No results')
+                  sys.exit(1)
+              query_safe = safe_name(U.replace('scsearch:', ''), 30)
+              out_dir = Path(f'searches/{query_safe}')
+              out_dir.mkdir(parents=True, exist_ok=True)
+              print(f'📥 Downloading top {len(tracks)} results...')
+              ok = []
+              for i, track in enumerate(tracks, 1):
+                  print(f'[{i}/{len(tracks)}] {track["title"]} - {track["artist"]}')
+                  file = download_track(track, out_dir, i)
+                  if file:
+                      ok.append(track)
+                      split_file(file, SP)
+                  time.sleep(1)
+              generate_index(ok, out_dir, prefix='search')
+              print(f'✅ Downloaded {len(ok)} tracks')
 
-          os.makedirs("downloads", exist_ok=True)
-          filepath = os.path.join("downloads", filename)
-
-          print(f"Downloading: {artist} - {title}")
-          try:
-              with open(filepath, 'wb+') as f:
-                  track.write_mp3_to(f)
-          except Exception as e:
-              print(f"Error writing mp3: {e}")
-              sys.exit(1)
-
-          size_mb = os.path.getsize(filepath) / (1024 * 1024)
-          print(f"SUCCESS: {filename} ({size_mb:.2f} MB)")
-
-          with open('/tmp/meta.txt', 'w') as f:
-              f.write(f"{filename}\n{size_mb:.2f}\n")
+          print('🏁 Finished')
           PYEOF
 
-      - name: Commit and Push
+      - name: 📤 Push Files
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "actions@github.com"
-          git add downloads/
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
+          git config user.email "bot@github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing to push"
             exit 0
           fi
-          FILENAME=$(sed -n '1p' /tmp/meta.txt)
-          SIZE=$(sed -n '2p' /tmp/meta.txt)
-          git commit -m "Download $FILENAME ($SIZE MB)"
-          git pull --rebase origin main
-          git push origin main
+          git commit -m "🎵 SoundCloud $(date +%m%d-%H%M) [skip ci]"
+          for i in 1 2 3 4 5; do
+            echo -n "Attempt $i... "
+            if git pull --rebase --quiet 2>/dev/null && git push --quiet 2>/dev/null; then
+              echo "Done!"
+              exit 0
+            fi
+            echo "failed"
+            git rebase --abort 2>/dev/null
+            sleep 5
+          done
+          echo "Push failed"
+          exit 1
