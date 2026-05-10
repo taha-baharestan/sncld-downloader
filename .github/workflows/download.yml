@@ -109,13 +109,13 @@ jobs:
               except: return '?'
 
           def get_tracks_info(url, limit):
-              cmd = ['yt-dlp', '--flat-playlist', '--dump-json', '--no-warnings',
+              cmd = ['yt-dlp', '--dump-json', '--no-warnings',
                      '--no-check-certificate', '--extractor-args', 'soundcloud:skip_auth=true']
               if limit > 0 and M != 'single':
                   cmd.extend(['--playlist-end', str(limit)])
               cmd.append(url)
 
-              r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+              r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
               tracks = []
               for line in r.stdout.strip().split('\n'):
                   if line and len(tracks) < limit:
@@ -127,7 +127,11 @@ jobs:
                           artist = d.get('uploader') or d.get('artist') or 'Unknown Artist'
                           duration = d.get('duration', 0)
                           thumbnail = d.get('thumbnail', '')
-                          track_url = d.get('webpage_url') or d.get('url', '')
+                          track_url = d.get('webpage_url', '')
+                          if not track_url:
+                              track_url = d.get('url', '')
+                          if '/sets/' in track_url:
+                              track_url = d.get('webpage_url', '') or d.get('url', '')
                           tracks.append({
                               'id': tid,
                               'title': title,
@@ -141,6 +145,10 @@ jobs:
               return tracks
 
           def download_track(track, out_dir, idx=1):
+              target_mp3 = out_dir / f'{idx:03d}_{track["id"]}.mp3'
+              for old_file in out_dir.glob(f'{idx:03d}_{track["id"]}.*'):
+                  old_file.unlink()
+
               out_template = out_dir / f'{idx:03d}_{track["id"]}.%(ext)s'
               quality_map = {
                   'best': '0',
@@ -157,6 +165,8 @@ jobs:
                   '--audio-quality', quality_map.get(Q, '0'),
                   '-o', str(out_template),
                   '--no-playlist',
+                  '--force-overwrites',
+                  '--no-continue',
                   '--no-warnings',
                   '--no-check-certificate',
                   '--extractor-args', 'soundcloud:skip_auth=true',
@@ -164,13 +174,14 @@ jobs:
               ]
               try:
                   subprocess.run(cmd, check=True, timeout=300)
-                  mp3_file = out_dir / f'{idx:03d}_{track["id"]}.mp3'
-                  if mp3_file.exists():
-                      return mp3_file
+                  if target_mp3.exists():
+                      return target_mp3
                   found = list(out_dir.glob(f'{idx:03d}_{track["id"]}.*'))
                   return found[0] if found else None
               except Exception as e:
                   print(f'Download error: {e}')
+                  for leftover in out_dir.glob(f'{idx:03d}_{track["id"]}.*'):
+                      leftover.unlink()
                   return None
 
           def split_file(filepath, threshold_mb):
@@ -243,7 +254,7 @@ jobs:
               print(f'📥 Downloading {len(tracks)} tracks...')
               ok = []
               for i, track in enumerate(tracks, 1):
-                  print(f'[{i}/{len(tracks)}] {track["title"]}')
+                  print(f'[{i}/{len(tracks)}] {track["title"]} by {track["artist"]}')
                   file = download_track(track, out_dir, i)
                   if file:
                       ok.append(track)
