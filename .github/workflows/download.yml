@@ -110,7 +110,7 @@ jobs:
 
           def get_tracks_info(url, limit):
               cmd = ['yt-dlp', '--dump-json', '--no-warnings',
-                     '--no-check-certificate', '--extractor-args', 'soundcloud:skip_auth=true']
+                     '--no-check-certificate']
               if limit > 0 and M != 'single':
                   cmd.extend(['--playlist-end', str(limit)])
               cmd.append(url)
@@ -169,7 +169,6 @@ jobs:
                   '--no-continue',
                   '--no-warnings',
                   '--no-check-certificate',
-                  '--extractor-args', 'soundcloud:skip_auth=true',
                   track['url']
               ]
               try:
@@ -226,8 +225,15 @@ jobs:
           if M == 'single':
               tracks = get_tracks_info(U, 1)
               if not tracks:
-                  print('❌ No track found')
-                  sys.exit(1)
+                  print('⚠️ Could not fetch metadata, using URL directly.')
+                  tracks = [{
+                      'id': hashlib.md5(U.encode()).hexdigest()[:8],
+                      'title': 'Unknown Track',
+                      'artist': 'Unknown Artist',
+                      'duration': 0,
+                      'thumbnail': '',
+                      'url': U
+                  }]
               artist = safe_name(tracks[0]['artist'], 30)
               out_dir = Path(f'downloads/{artist}_tracks')
               out_dir.mkdir(parents=True, exist_ok=True)
