@@ -1,4 +1,3 @@
-
 name: 🎵 SoundCloud Downloader
 
 on:
@@ -20,7 +19,6 @@ on:
       quality:
         description: 'Audio quality (best/128/192/320)'
         required: false
-
         type: string
         default: 'best'
       max_tracks:
@@ -42,7 +40,6 @@ jobs:
   download-soundcloud:
     name: 🎧 SoundCloud Downloader
     runs-on: ubuntu-latest
-
     timeout-minutes: 120
     permissions:
       contents: write
@@ -62,9 +59,7 @@ jobs:
         run: |
           python3 -c "import requests" 2>/dev/null || pip3 install -q requests
           command -v yt-dlp &>/dev/null || pip3 install -q yt-dlp
-          command -v zip &>/dev/null || (sudo 
-
-apt-get update -qq && sudo apt-get install -y -qq zip)
+          command -v zip &>/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq zip)
           command -v ffmpeg &>/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
 
       - name: 🔗 Prepare
@@ -81,9 +76,7 @@ apt-get update -qq && sudo apt-get install -y -qq zip)
       - name: 🎯 Download & Process
         id: main
         env:
-          MODE: ${{ steps.prep.outputs.MODE 
-
-}}
+          MODE: ${{ steps.prep.outputs.MODE }}
           URL: ${{ steps.prep.outputs.URL }}
           QUALITY: ${{ github.event.inputs.quality }}
           MAX: ${{ github.event.inputs.max_tracks }}
@@ -119,7 +112,6 @@ apt-get update -qq && sudo apt-get install -y -qq zip)
 
           def get_tracks_info(url, limit):
               cmd = ['yt-dlp', '--dump-json', '--no-warnings',
-
                      '--no-check-certificate']
               if limit > 0 and M != 'single':
                   cmd.extend(['--playlist-end', str(limit)])
@@ -136,9 +128,7 @@ apt-get update -qq && sudo apt-get install -y -qq zip)
                           title = d.get('title', 'Untitled')[:80]
                           artist = d.get('uploader') or d.get('artist') or 'Unknown Artist'
                           duration = d.get('duration', 0)
-                          thumbnail = 
-
-d.get('thumbnail', '')
+                          thumbnail = d.get('thumbnail', '')
                           track_url = d.get('webpage_url', '')
                           if not track_url:
                               track_url = d.get('url', '')
@@ -156,9 +146,7 @@ d.get('thumbnail', '')
                           continue
               return tracks
 
-          def download_track(track, out_dir, 
-
-idx=1):
+          def download_track(track, out_dir, idx=1):
               target_mp3 = out_dir / f'{idx:03d}_{track["id"]}.mp3'
               for old_file in out_dir.glob(f'{idx:03d}_{track["id"]}.*'):
                   old_file.unlink()
@@ -176,7 +164,6 @@ idx=1):
                   'yt-dlp',
                   '-f', 'bestaudio[abr>0]',
                   '--extract-audio',
-
                   '--audio-format', 'mp3',
                   '--audio-quality', target_quality,
                   '-o', str(out_template),
@@ -195,7 +182,6 @@ idx=1):
                   found = list(out_dir.glob(f'{idx:03d}_{track["id"]}.*'))
                   return found[0] if found else None
               except Exception as e:
-
                   print(f'Download error: {e}')
                   for leftover in out_dir.glob(f'{idx:03d}_{track["id"]}.*'):
                       leftover.unlink()
@@ -213,7 +199,6 @@ idx=1):
               return False
 
           def generate_index(tracks, folder, prefix='sc'):
-
               ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
               md_path = folder / f'{prefix}_{ts}.md'
               contents = []
@@ -224,9 +209,7 @@ idx=1):
               for i, t in enumerate(tracks, 1):
                   dur = f'{t["duration"]//60}:{t["duration"]%60:02d}' if t['duration'] else '?'
                   art = f'<img src="{t["thumbnail"]}" width="60">' if t['thumbnail'] else ''
-                  contents.append(f'| {i} | {art} | 
-
-{t["title"]} | {t["artist"]} | {dur} |\n')
+                  contents.append(f'| {i} | {art} | {t["title"]} | {t["artist"]} | {dur} |\n')
               contents.append('\n---\n')
               for i, t in enumerate(tracks, 1):
                   contents.append(f'### {i}. {t["title"]}\n')
@@ -243,7 +226,6 @@ idx=1):
           print(f'🎧 {M.upper()} MODE')
           print('='*50)
 
-
           if M == 'single':
               tracks = get_tracks_info(U, 1)
               if not tracks:
@@ -259,7 +241,6 @@ idx=1):
               artist = safe_name(tracks[0]['artist'], 30)
               out_dir = Path(f'soundcloud_downloads/{artist}_tracks')
               out_dir.mkdir(parents=True, exist_ok=True)
-
               print(f'📥 Downloading: {tracks[0]["title"]} by {tracks[0]["artist"]}')
               file = download_track(tracks[0], out_dir, 1)
               if file:
@@ -278,7 +259,6 @@ idx=1):
                   sys.exit(1)
               first_track = tracks[0]
               artist = safe_name(first_track.get('artist', 'playlist'), 30)
-
               out_dir = Path(f'soundcloud_downloads/{artist}_playlist')
               out_dir.mkdir(parents=True, exist_ok=True)
               print(f'📥 Downloading {len(tracks)} tracks...')
@@ -294,9 +274,7 @@ idx=1):
                   if i < len(tracks):
                       time.sleep(1)
               generate_index(ok, out_dir)
-              print(f'✅ Download complete: 
-
-{len(ok)}/{len(tracks)} tracks')
+              print(f'✅ Download complete: {len(ok)}/{len(tracks)} tracks')
 
           elif M == 'search':
               print(f'🔍 Searching SoundCloud for: {U}')
@@ -312,7 +290,6 @@ idx=1):
               for i, track in enumerate(tracks, 1):
                   print(f'[{i}/{len(tracks)}] {track["title"]} - {track["artist"]}')
                   file = download_track(track, out_dir, i)
-
                   if file:
                       ok.append(track)
                       split_file(file, SP)
@@ -331,7 +308,6 @@ idx=1):
           if git diff --cached --quiet; then
             echo "Nothing to push"
             exit 0
-
           fi
           git commit -m "🎵 SoundCloud $(date +%m%d-%H%M) [skip ci]"
           for i in 1 2 3 4 5; do
