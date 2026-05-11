@@ -1,16 +1,25 @@
-name: 🧹 Clean All Downloads & Logs
+name: 🧹 Clean Selected Downloads
 
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: '🎯 Which files to delete?'
+        required: true
+        type: choice
+        options:
+          - youtube
+          - soundcloud
+          - all
+        default: 'youtube'
       confirm:
-        description: 'Type DELETE to confirm cleanup'
+        description: 'Type DELETE to confirm'
         required: true
         type: string
 
 jobs:
   cleanup:
-    name: 🧹 Clean Repository
+    name: 🧹 Clean Up
     runs-on: ubuntu-latest
     if: github.event.inputs.confirm == 'DELETE'
     permissions:
@@ -22,21 +31,31 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 1
 
-      - name: 🧹 Remove all generated content
+      - name: 🧹 Remove selected folders and logs
         run: |
-          echo "Removing download directories..."
-          rm -rf downloads/
-          rm -rf searches/
-          rm -rf playlists/
+          TARGET="${{ github.event.inputs.target }}"
 
-          echo "Removing temporary and log files..."
+          if [[ "$TARGET" == "youtube" || "$TARGET" == "all" ]]; then
+            echo "Removing YouTube folders..."
+            rm -rf youtube_downloads/
+            rm -rf youtube_searches/
+            rm -rf youtube_playlists/
+          fi
+
+          if [[ "$TARGET" == "soundcloud" || "$TARGET" == "all" ]]; then
+            echo "Removing SoundCloud folders..."
+            rm -rf soundcloud_downloads/
+            rm -rf soundcloud_searches/
+          fi
+
+          echo "Removing all logs & temp files..."
           find . -maxdepth 1 -name "*.log" -type f -delete
           find . -maxdepth 1 -name "*.part" -type f -delete
           find . -maxdepth 1 -name "*.ytdl" -type f -delete
           find . -maxdepth 1 -name "*.tmp" -type f -delete
           find . -maxdepth 1 -name "*.json" -type f -delete
 
-          echo "Cleanup complete."
+          echo "Cleanup finished."
 
       - name: 📤 Push changes
         run: |
@@ -44,8 +63,8 @@ jobs:
           git config user.email "bot@github.com"
           git add -A
           if git diff --cached --quiet; then
-            echo "Nothing to commit - repo is clean."
+            echo "Nothing to push."
             exit 0
           fi
-          git commit -m "🧹 Clean downloads and logs [skip ci]"
+          git commit -m "🧹 Clean ${{ github.event.inputs.target }} files [skip ci]"
           git push
