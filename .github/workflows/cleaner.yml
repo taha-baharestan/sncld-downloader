@@ -22,19 +22,19 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 1
 
-      - name: 🧹 Remove all download-related files
+      - name: 🧹 Remove all generated content
         run: |
-          echo "Cleaning up downloads..."
+          echo "Removing download directories..."
           rm -rf downloads/
           rm -rf searches/
           rm -rf playlists/
-          rm -f downloads.md
 
-          echo "Cleaning up logs and temporary files..."
+          echo "Removing temporary and log files..."
           find . -maxdepth 1 -name "*.log" -type f -delete
           find . -maxdepth 1 -name "*.part" -type f -delete
           find . -maxdepth 1 -name "*.ytdl" -type f -delete
           find . -maxdepth 1 -name "*.tmp" -type f -delete
+          find . -maxdepth 1 -name "*.json" -type f -delete
 
           echo "Cleanup complete."
 
@@ -47,5 +47,5 @@ jobs:
             echo "Nothing to commit - repo is clean."
             exit 0
           fi
-          git commit -m "🧹 Clean downloads, logs, and temp files [skip ci]"
+          git commit -m "🧹 Clean downloads and logs [skip ci]"
           git push
