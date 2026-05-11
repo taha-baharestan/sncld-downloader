@@ -1,3 +1,4 @@
+
 name: 🎵 SoundCloud Downloader
 
 on:
@@ -19,6 +20,7 @@ on:
       quality:
         description: 'Audio quality (best/128/192/320)'
         required: false
+
         type: string
         default: 'best'
       max_tracks:
@@ -40,6 +42,7 @@ jobs:
   download-soundcloud:
     name: 🎧 SoundCloud Downloader
     runs-on: ubuntu-latest
+
     timeout-minutes: 120
     permissions:
       contents: write
@@ -59,7 +62,9 @@ jobs:
         run: |
           python3 -c "import requests" 2>/dev/null || pip3 install -q requests
           command -v yt-dlp &>/dev/null || pip3 install -q yt-dlp
-          command -v zip &>/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq zip)
+          command -v zip &>/dev/null || (sudo 
+
+apt-get update -qq && sudo apt-get install -y -qq zip)
           command -v ffmpeg &>/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
 
       - name: 🔗 Prepare
@@ -76,7 +81,9 @@ jobs:
       - name: 🎯 Download & Process
         id: main
         env:
-          MODE: ${{ steps.prep.outputs.MODE }}
+          MODE: ${{ steps.prep.outputs.MODE 
+
+}}
           URL: ${{ steps.prep.outputs.URL }}
           QUALITY: ${{ github.event.inputs.quality }}
           MAX: ${{ github.event.inputs.max_tracks }}
@@ -94,6 +101,8 @@ jobs:
           MX = int(os.environ.get('MAX', '10'))
           SP = int(os.environ.get('SPLIT', '50'))
 
+          SC_CLIENT_ID = "a3p4h6v7e5w8x9y2z1b0c4d5e6f7g8h9"
+
           def safe_name(text, maxlen=40):
               safe = re.sub(r'[^\w]', '_', text)[:maxlen]
               safe = re.sub(r'_+', '_', safe).strip('_')
@@ -110,6 +119,7 @@ jobs:
 
           def get_tracks_info(url, limit):
               cmd = ['yt-dlp', '--dump-json', '--no-warnings',
+
                      '--no-check-certificate']
               if limit > 0 and M != 'single':
                   cmd.extend(['--playlist-end', str(limit)])
@@ -126,7 +136,9 @@ jobs:
                           title = d.get('title', 'Untitled')[:80]
                           artist = d.get('uploader') or d.get('artist') or 'Unknown Artist'
                           duration = d.get('duration', 0)
-                          thumbnail = d.get('thumbnail', '')
+                          thumbnail = 
+
+d.get('thumbnail', '')
                           track_url = d.get('webpage_url', '')
                           if not track_url:
                               track_url = d.get('url', '')
@@ -144,7 +156,9 @@ jobs:
                           continue
               return tracks
 
-          def download_track(track, out_dir, idx=1):
+          def download_track(track, out_dir, 
+
+idx=1):
               target_mp3 = out_dir / f'{idx:03d}_{track["id"]}.mp3'
               for old_file in out_dir.glob(f'{idx:03d}_{track["id"]}.*'):
                   old_file.unlink()
@@ -152,23 +166,26 @@ jobs:
               out_template = out_dir / f'{idx:03d}_{track["id"]}.%(ext)s'
               quality_map = {
                   'best': '0',
-                  '128': '128',
-                  '192': '192',
-                  '320': '320'
+                  '128': '9',
+                  '192': '5',
+                  '320': '0'
               }
-              fmt_sel = f'bestaudio[abr<={quality_map.get(Q, "0")}]' if Q != 'best' else 'bestaudio/best'
+              target_quality = quality_map.get(Q, '0')
 
               cmd = [
                   'yt-dlp',
+                  '-f', 'bestaudio[abr>0]',
                   '--extract-audio',
+
                   '--audio-format', 'mp3',
-                  '--audio-quality', quality_map.get(Q, '0'),
+                  '--audio-quality', target_quality,
                   '-o', str(out_template),
                   '--no-playlist',
                   '--force-overwrites',
                   '--no-continue',
                   '--no-warnings',
                   '--no-check-certificate',
+                  '--extractor-args', f'soundcloud:client_id={SC_CLIENT_ID}',
                   track['url']
               ]
               try:
@@ -178,6 +195,7 @@ jobs:
                   found = list(out_dir.glob(f'{idx:03d}_{track["id"]}.*'))
                   return found[0] if found else None
               except Exception as e:
+
                   print(f'Download error: {e}')
                   for leftover in out_dir.glob(f'{idx:03d}_{track["id"]}.*'):
                       leftover.unlink()
@@ -195,6 +213,7 @@ jobs:
               return False
 
           def generate_index(tracks, folder, prefix='sc'):
+
               ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
               md_path = folder / f'{prefix}_{ts}.md'
               contents = []
@@ -205,7 +224,9 @@ jobs:
               for i, t in enumerate(tracks, 1):
                   dur = f'{t["duration"]//60}:{t["duration"]%60:02d}' if t['duration'] else '?'
                   art = f'<img src="{t["thumbnail"]}" width="60">' if t['thumbnail'] else ''
-                  contents.append(f'| {i} | {art} | {t["title"]} | {t["artist"]} | {dur} |\n')
+                  contents.append(f'| {i} | {art} | 
+
+{t["title"]} | {t["artist"]} | {dur} |\n')
               contents.append('\n---\n')
               for i, t in enumerate(tracks, 1):
                   contents.append(f'### {i}. {t["title"]}\n')
@@ -222,6 +243,7 @@ jobs:
           print(f'🎧 {M.upper()} MODE')
           print('='*50)
 
+
           if M == 'single':
               tracks = get_tracks_info(U, 1)
               if not tracks:
@@ -235,8 +257,9 @@ jobs:
                       'url': U
                   }]
               artist = safe_name(tracks[0]['artist'], 30)
-              out_dir = Path(f'downloads/{artist}_tracks')
+              out_dir = Path(f'soundcloud_downloads/{artist}_tracks')
               out_dir.mkdir(parents=True, exist_ok=True)
+
               print(f'📥 Downloading: {tracks[0]["title"]} by {tracks[0]["artist"]}')
               file = download_track(tracks[0], out_dir, 1)
               if file:
@@ -255,7 +278,8 @@ jobs:
                   sys.exit(1)
               first_track = tracks[0]
               artist = safe_name(first_track.get('artist', 'playlist'), 30)
-              out_dir = Path(f'downloads/{artist}_playlist')
+
+              out_dir = Path(f'soundcloud_downloads/{artist}_playlist')
               out_dir.mkdir(parents=True, exist_ok=True)
               print(f'📥 Downloading {len(tracks)} tracks...')
               ok = []
@@ -270,7 +294,9 @@ jobs:
                   if i < len(tracks):
                       time.sleep(1)
               generate_index(ok, out_dir)
-              print(f'✅ Download complete: {len(ok)}/{len(tracks)} tracks')
+              print(f'✅ Download complete: 
+
+{len(ok)}/{len(tracks)} tracks')
 
           elif M == 'search':
               print(f'🔍 Searching SoundCloud for: {U}')
@@ -279,13 +305,14 @@ jobs:
                   print('❌ No results')
                   sys.exit(1)
               query_safe = safe_name(U.replace('scsearch:', ''), 30)
-              out_dir = Path(f'searches/{query_safe}')
+              out_dir = Path(f'soundcloud_searches/{query_safe}')
               out_dir.mkdir(parents=True, exist_ok=True)
               print(f'📥 Downloading top {len(tracks)} results...')
               ok = []
               for i, track in enumerate(tracks, 1):
                   print(f'[{i}/{len(tracks)}] {track["title"]} - {track["artist"]}')
                   file = download_track(track, out_dir, i)
+
                   if file:
                       ok.append(track)
                       split_file(file, SP)
@@ -304,6 +331,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "Nothing to push"
             exit 0
+
           fi
           git commit -m "🎵 SoundCloud $(date +%m%d-%H%M) [skip ci]"
           for i in 1 2 3 4 5; do
