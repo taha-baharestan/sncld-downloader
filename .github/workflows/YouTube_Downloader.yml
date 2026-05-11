@@ -243,7 +243,6 @@ jobs:
                           print(f'      ⚠️ Skip: {str(e)[:40]}')
                           continue
              
-              # Limit by max_videos only if no end_index set
               if end == 0 and max_videos > 0 and len(v) > max_videos:
                   v = v[:max_videos]
              
@@ -251,10 +250,10 @@ jobs:
 
           def mkidx(v, cn, cd):
               ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-              Path('./playlists').mkdir(exist_ok=True)
+              Path('./youtube_playlists').mkdir(exist_ok=True)
               inf = cd / 'info'
               inf.mkdir(parents=True, exist_ok=True)
-              idxf = f'playlists/{cn}_{ts}.md'
+              idxf = f'youtube_playlists/{cn}_{ts}.md'
              
               m = (f'# 📺 {cn}\n\n**{datetime.now():%Y-%m-%d %H:%M}** | **{len(v)} videos**\n\n'
                    f'| # | Thumbnail | Title | Duration | Views |\n'
@@ -360,9 +359,9 @@ jobs:
               v, _ = gvl(f'ytsearch{MX}:{U}', 1, 0, MX)
               if not v: print('❌ No results'); sys.exit(1)
               ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-              Path('./searches').mkdir(exist_ok=True)
+              Path('./youtube_searches').mkdir(exist_ok=True)
               qs = safe_name(U, 30)
-              f = f'searches/{qs}_{ts}.md'
+              f = f'youtube_searches/{qs}_{ts}.md'
               m = (f'# 🔍 Search: {U}\n\n**{datetime.now():%Y-%m-%d %H:%M}** | **{len(v)} results**\n\n'
                    f'| # | Thumbnail | Title | Channel | Views | Duration |\n'
                    f'|---|-----------|-------|---------|-------|----------|\n')
@@ -383,7 +382,7 @@ jobs:
               v, cn = gvl(U, START, END, MX)
               if not v: print('❌ No videos found'); sys.exit(1)
 
-              cd = Path(f'downloads/{cn}_videos')
+              cd = Path(f'youtube_downloads/{cn}_videos')
               cd.mkdir(parents=True, exist_ok=True)
 
               print(f'\n📝 Creating index...')
@@ -424,7 +423,6 @@ jobs:
               print(f'{"="*50}')
 
           else:
-              # Single video mode
               vid_match = re.search(r'(?:v=|/)([\w-]{11})', U)
               vid = vid_match.group(1) if vid_match else 'x'
              
@@ -433,12 +431,12 @@ jobs:
              
               result = dl_video(U)
               if result:
-                  cd = Path(f'downloads/{cn}_videos')
+                  cd = Path(f'youtube_downloads/{cn}_videos')
                   cd.mkdir(parents=True, exist_ok=True)
                   fp = cd / f'v_{vid}.{result["e"]}'
                   size = download_file(result['u'], fp)
                   if size:
-                      print(f'✅ Saved to {cn}_videos/ ({size/1e6:.1f}MB)')
+                      print(f'✅ Saved to youtube_downloads/{cn}_videos/ ({size/1e6:.1f}MB)')
                       split_file(fp, SP)
               else:
                   print('❌ Failed'); sys.exit(1)
@@ -447,44 +445,23 @@ jobs:
 
       - name: 📤 Push Files
         run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "📤 PUSHING TO GITHUB"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-         
           git config user.name "github-actions[bot]"
           git config user.email "bot@github.com"
-         
-          echo ""
-          echo "📋 Adding all files..."
           git add -A
-         
-          TOTAL=$(git diff --cached --name-only | wc -l)
-          echo "   Found $TOTAL files"
-         
-          if [ "$TOTAL" -eq 0 ]; then
-            echo "❌ Nothing to push"
+          if git diff --cached --quiet; then
+            echo "Nothing to push"
             exit 0
           fi
-         
-          git diff --cached --name-only | while read f; do
-            echo "   📎 $f"
-          done
-         
-          echo ""
-          echo "📤 Pushing..."
-         
-          git commit -m "📦 $(date +%m%d-%H%M) [skip ci]" --quiet
-         
+          git commit -m "📦 $(date +%m%d-%H%M) [skip ci]"
           for i in 1 2 3 4 5; do
-            echo -n "   🚀 Attempt $i/5..."
+            echo -n "Attempt $i... "
             if git pull --rebase --quiet 2>/dev/null && git push --quiet 2>/dev/null; then
-              echo " ✅ DONE!"
+              echo "Done!"
               exit 0
             fi
-            echo " ❌"
+            echo "failed"
             git rebase --abort 2>/dev/null
-            [ $i -lt 5 ] && sleep $((i*5))
+            sleep 5
           done
-         
-          echo "   ❌ Push failed"
+          echo "Push failed"
           exit 1
