@@ -1,10 +1,10 @@
-name: 🧹 Clean Selected Downloads
+name: 🧹 Clean Selected Downloads & Indexes
 
 on:
   workflow_dispatch:
     inputs:
       target:
-        description: '🎯 Which files to delete?'
+        description: '🎯 Which service files to delete?'
         required: true
         type: choice
         options:
@@ -40,6 +40,7 @@ jobs:
             rm -rf youtube_downloads/
             rm -rf youtube_searches/
             rm -rf youtube_playlists/
+            rm -rf youtube_indexes/
           fi
 
           if [[ "$TARGET" == "soundcloud" || "$TARGET" == "all" ]]; then
